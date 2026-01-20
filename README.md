@@ -1,7 +1,13 @@
+// remote Raspberry Pi 5 in Arm Station
+ssh raspi-earth@172.20.10.2
+Password: spacebar and enter
+
+// remote Raspberry Pi Zero 2W in End effector
+ssh raspi-zero-two-w-earth@172.20.10.3
+Password: spacebar and enter
+
 jobs -l
 kill -9 
-
-ssh raspi-earth@172.20.10.3
 
 ros2 run motor_control stepmotor1
 ros2 run motor_control servo_driver_i2c
