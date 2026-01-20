@@ -1,0 +1,5 @@
+  File "/home/raspi-earth/project_ws/install/encoder_unit/lib/python3.11/site-packages/encoder_unit/as5600_1.py", line 59
+    return (hi << 😎 | lo
+                  ^
+SyntaxError: invalid character '😎' (U+1F60E)
+
