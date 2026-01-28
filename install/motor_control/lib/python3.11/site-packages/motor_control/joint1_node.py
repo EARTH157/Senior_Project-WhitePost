@@ -36,7 +36,7 @@ MAX_DELAY = 0.0010
 PULSE_WIDTH = 0.00001 
 
 ANGLE_TOLERANCE = 0.5 
-WARN_DIFF_THRESHOLD = 2.0  # ยอมให้คลาดเคลื่อนได้ 2 องศา ถ้าเกินนี้ต้อง Homing ใหม่
+WARN_DIFF_THRESHOLD = 0.5  # ยอมให้คลาดเคลื่อนได้ 0.5 องศา ถ้าเกินนี้ต้อง Homing ใหม่
 STATE_FILE = "joint1_last_state.json" 
 
 class Joint1Driver(Node):

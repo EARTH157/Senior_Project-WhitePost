@@ -11,7 +11,7 @@ import json
 import os
 
 # ==========================================
-# ⚙️ CONFIGURATION FOR JOINT 3 DRIVER
+# ⚙️ CONFIGURATION
 # ==========================================
 PIN_ENA = 22
 PIN_DIR = 27
@@ -23,13 +23,7 @@ ENA_ACTIVE_HIGH = False
 I2C_BUS_ID = 1
 MUX_ADDR = 0x70
 AS5600_ADDR = 0x36
-MUX_CHANNEL = 3 
-
-# ต้องแก้โค๊ดที่ตรงนี้เพื่อเปลี่ยนทิศเซ็นเซอร์
-# 🔥 SENSOR DIRECTION SETTING 🔥
-# True = แปลง Raw มากให้เป็นมุมน้อย (กลับทิศ)
-# False = ปกติ (Raw มาก = มุมมาก)
-INVERT_SENSOR_DIR = True  
+MUX_CHANNEL = 3
 
 # PID Parameters
 KP = 0.50
@@ -42,20 +36,17 @@ MAX_DELAY = 0.0010
 PULSE_WIDTH = 0.00001 
 
 ANGLE_TOLERANCE = 0.5 
-WARN_DIFF_THRESHOLD = 2.0  
-STATE_FILE = "joint3_last_state.json"
-
-# 📐 LIMIT SETTINGS
-MIN_ANGLE_LIMIT = 8.0    
-MAX_ANGLE_LIMIT = 352.0  
+WARN_DIFF_THRESHOLD = 0.5  # ยอมให้คลาดเคลื่อนได้ 0.5 องศา ถ้าเกินนี้ต้อง Homing ใหม่
+STATE_FILE = "joint3_last_state.json" 
 
 class Joint3Driver(Node):
     def __init__(self):
-        super().__init__('joint3_driver_node') 
+        super().__init__('joint3_driver_node')
         self.zero_offset = 0.0
         self.is_homed = False
         self.current_target = None 
         
+        # PID Variables
         self.prev_error = 0.0
         self.integral = 0.0
         self.last_pid_time = time.time()
@@ -63,7 +54,7 @@ class Joint3Driver(Node):
         # Setup GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
-        GPIO.setup(PIN_ENA, GPIO.OUT, initial=GPIO.HIGH)
+        GPIO.setup(PIN_ENA, GPIO.OUT, initial=GPIO.HIGH) # ปิดไว้ก่อน
         GPIO.setup(PIN_DIR, GPIO.OUT, initial=GPIO.LOW)
         GPIO.setup(PIN_PUL, GPIO.OUT, initial=GPIO.LOW)
         GPIO.setup(PIN_LIMIT, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -83,34 +74,28 @@ class Joint3Driver(Node):
         self.angle_pub = self.create_publisher(Float32, 'joint3/angle', 10)
         self.create_timer(0.5, self.report_status)
 
+        # -----------------------------------------------------
+        # 🔥 ตรวจสอบค่าเดิม (Auto-Resume Logic)
+        # -----------------------------------------------------
         self.check_initial_position()
 
+        # เริ่ม Thread ควบคุม
         self.running = True
         self.worker_thread = threading.Thread(target=self.control_loop_worker, daemon=True)
         self.worker_thread.start()
 
         if not self.is_homed:
-            self.get_logger().info("⏳ Waiting for calibration command... (Topic: /joint3/calibrate)")
-
-    # ---------------------------------------------------------
-    # 🧮 MATH HELPER
-    # ---------------------------------------------------------
-    def normalize_angle(self, angle):
-        return angle % 360.0
-
-    def calculate_angle(self, raw):
-        """ คำนวณมุมตามทิศทางที่ตั้งค่าไว้ """
-        if INVERT_SENSOR_DIR:
-            # สูตรกลับทิศ: Offset - Raw
-            return self.normalize_angle(self.zero_offset - raw)
-        else:
-            # สูตรปกติ: Raw - Offset
-            return self.normalize_angle(raw - self.zero_offset)
+            self.get_logger().info("⏳ Waiting for calibration command... (Topic: /joint1/calibrate)")
 
     # ---------------------------------------------------------
     # 💾 STATE CHECKING
     # ---------------------------------------------------------
     def check_initial_position(self):
+        """
+        เช็คตำแหน่ง:
+        - ถ้าตำแหน่งเดิมปลอดภัย -> Load ค่า Offset -> is_homed = True เลย
+        - ถ้าตำแหน่งเปลี่ยน -> is_homed = False -> รอ Calibrate
+        """
         current_raw = self.read_as5600()
         if current_raw is None: return
 
@@ -119,38 +104,56 @@ class Joint3Driver(Node):
                 with open(STATE_FILE, 'r') as f:
                     data = json.load(f)
                     last_raw = data.get('last_raw_angle', -1)
-                    saved_offset = data.get('zero_offset', 0.0)
+                    saved_offset = data.get('zero_offset', 0.0) # โหลดค่า Offset เดิมด้วย
                 
                 if last_raw != -1:
+                    # คำนวณความต่าง
                     diff = abs(current_raw - last_raw)
                     if diff > 180: diff = 360 - diff
 
                     if diff <= WARN_DIFF_THRESHOLD:
-                        self.get_logger().info(f"✅ Position Verified. Resuming...")
+                        # ✅ เคสปลอดภัย: มุมไม่เปลี่ยน
+                        self.get_logger().info(f"✅ Position Verified (Diff: {diff:.2f}°). Resuming...")
+                        
+                        # 1. คืนค่า Zero Offset เดิม
                         self.zero_offset = saved_offset
+                        
+                        # 2. ตั้งค่าสถานะเป็น Homed แล้ว
                         self.is_homed = True
                         
-                        current_angle = self.calculate_angle(current_raw)
+                        # 3. ตั้ง Target เป็นมุมปัจจุบันทันที (ให้ Motor Hold ตำแหน่งนี้)
+                        current_angle = current_raw - self.zero_offset
                         self.current_target = current_angle
                         
+                        # 4. จ่ายไฟเข้ามอเตอร์
                         self.enable_motor(True)
                         self.get_logger().info(f"🚀 System READY! Holding at {current_angle:.2f}°")
+                        
                     else:
+                        # ❌ เคสอันตราย: มุมเปลี่ยนไปเยอะ (อาจมีคนไปหมุนตอนปิดเครื่อง)
                         self.get_logger().warn(f"⚠️ MOVED WHILE OFF! (Diff: {diff:.2f}°)")
-                        self.is_homed = False 
+                        self.get_logger().warn("   Safety Lock: PLEASE RE-CALIBRATE.")
+                        self.is_homed = False # บังคับ Calibrate ใหม่
             except Exception as e:
                 self.get_logger().error(f"Failed to load state: {e}")
         else:
             self.get_logger().info("ℹ️ No previous state file found. Calibration required.")
 
     def save_current_state(self):
+        """บันทึกค่า Sensor และ Offset ก่อนปิดโปรแกรม"""
         current_raw = self.read_as5600()
         if current_raw is not None:
-            data = {'last_raw_angle': current_raw, 'zero_offset': self.zero_offset}
+            # บันทึกทั้ง Raw Angle และ Zero Offset
+            data = {
+                'last_raw_angle': current_raw,
+                'zero_offset': self.zero_offset
+            }
             try:
                 with open(STATE_FILE, 'w') as f:
                     json.dump(data, f)
-            except: pass
+                self.get_logger().info(f"💾 State saved. Raw: {current_raw:.2f}, Offset: {self.zero_offset:.2f}")
+            except Exception as e:
+                self.get_logger().error(f"Failed to save state: {e}")
 
     # ---------------------------------------------------------
     # 📨 ROS CALLBACKS
@@ -169,16 +172,17 @@ class Joint3Driver(Node):
         if not self.is_homed:
             self.get_logger().warn("⚠️ Ignoring target: Need Calibration first!")
             return
+            
+        self.current_target = msg.data
+        self.get_logger().info(f"🎯 Target Updated: {self.current_target:.2f}")
         
-        raw_target = msg.data
-        clamped_target = max(MIN_ANGLE_LIMIT, min(MAX_ANGLE_LIMIT, raw_target))
-        self.current_target = clamped_target
+        # Reset PID parameters to prevent jump
         self.prev_error = 0.0
         self.integral = 0.0
         self.last_pid_time = time.time()
 
     # ---------------------------------------------------------
-    # ⏱️ CONTROL LOOP
+    # ⏱️ CONTROL LOOP (แก้ไขเพิ่ม Safety)
     # ---------------------------------------------------------
     def precise_delay(self, duration):
         start = time.perf_counter()
@@ -196,6 +200,7 @@ class Joint3Driver(Node):
 
     def control_loop_worker(self):
         while self.running and rclpy.ok():
+            # ถ้ายังไม่ Homed และไม่มี Target ให้รอ
             if not self.is_homed or self.current_target is None:
                 time.sleep(0.1)
                 continue
@@ -206,15 +211,14 @@ class Joint3Driver(Node):
 
             error = self.current_target - current_angle
             
-            if error > 180: error -= 360
-            if error < -180: error += 360
-
+            # Deadband
             if abs(error) <= ANGLE_TOLERANCE:
                 self.integral = 0.0
                 self.prev_error = 0.0
                 time.sleep(0.01)
                 continue 
 
+            # PID Logic
             now = time.time()
             dt = now - self.last_pid_time
             if dt == 0: dt = 0.001
@@ -222,6 +226,7 @@ class Joint3Driver(Node):
             self.integral += error * dt
             derivative = (error - self.prev_error) / dt
             pid_output = (KP * error) + (KI * self.integral) + (KD * derivative)
+            
             self.prev_error = error
             self.last_pid_time = now
 
@@ -236,46 +241,41 @@ class Joint3Driver(Node):
             if calc_delay < MIN_DELAY: calc_delay = MIN_DELAY
             if calc_delay > MAX_DELAY: calc_delay = MAX_DELAY
 
-            # ==========================================================
-            # 🛡️ SAFETY PROTECTION
-            # ==========================================================
-            
-            # 🔥 1. HARD LIMIT (Switch = 8°)
-            if GPIO.input(PIN_LIMIT) == 0:
+            # ------------------------------------------------------------------
+            # 🛡️ SAFETY CHECK: LIMIT SWITCH PROTECTION
+            # ------------------------------------------------------------------
+            # สมมติฐาน: Homing วิ่งทิศ -1 เข้าหา Limit (ตามฟังก์ชัน homing sequence)
+            # ดังนั้นถ้าชน Limit:
+            #   - ห้ามวิ่ง -1 (เข้าหาสวิตช์)
+            #   - ยอมให้วิ่ง +1 (ถอยออกจากสวิตช์)
+            # ------------------------------------------------------------------
+            if GPIO.input(PIN_LIMIT) == 0:  # 0 คือถูกกด (NC/NO แล้วแต่วงจร แต่ใน homing ใช้ 0=ชน)
                 if direction == -1: 
-                    self.integral = 0
-                    if int(time.time()) % 2 == 0:
-                        print(f"🛑 LIMIT HIT! Blocking move DOWN. Angle: {current_angle:.2f}", end='\r')
+                    # 🛑 กรณีพยายามวิ่งเข้าหา Limit ทั้งที่ชนอยู่ -> หยุดทันที!
+                    self.integral = 0.0   # Reset Integral ไม่ให้แรงสะสม
+                    self.prev_error = 0.0
+                    
+                    # Log เตือน (แบบไม่รัวเกินไป)
+                    if int(time.time()) % 2 == 0: 
+                        print(f"🛑 LIMIT HIT! Blocking MOVE IN (-). Angle: {current_angle:.2f}", end='\r')
+                    
                     time.sleep(0.01)
-                    continue
+                    continue  # 🚫 ข้ามการสั่ง Pulse รอบนี้ไปเลย
+                
+                else:
+                    # ✅ กรณีวิ่ง +1 (ถอยออก) -> ยอมให้ทำได้
+                    pass 
 
-            # 🔥 2. SOFT LIMIT LOW
-            if current_angle < (MIN_ANGLE_LIMIT - 0.5): 
-                if direction == -1: 
-                    self.integral = 0
-                    if int(time.time()) % 2 == 0:
-                        print(f"🛑 SOFT LIMIT LOW! Blocking move DOWN. Angle: {current_angle:.2f}", end='\r')
-                    time.sleep(0.01)
-                    continue
-
-            # 🔥 3. SOFT LIMIT HIGH
-            if current_angle >= MAX_ANGLE_LIMIT:
-                if direction == 1: 
-                    self.integral = 0
-                    if int(time.time()) % 2 == 0:
-                        print(f"🛑 SOFT LIMIT HIGH! Blocking move UP. Angle: {current_angle:.2f}", end='\r')
-                    time.sleep(0.01)
-                    continue
-            
+            # สั่ง Pulse เมื่อผ่านเงื่อนไขความปลอดภัย
             self.step_pulse_single(direction, calc_delay)
 
     # ---------------------------------------------------------
-    # 📐 SENSOR READING
+    # 📐 SENSOR
     # ---------------------------------------------------------
     def get_calibrated_angle(self):
         raw = self.read_as5600()
         if raw is not None:
-            return self.calculate_angle(raw)
+            return raw - self.zero_offset
         return None
 
     def read_as5600(self):
@@ -294,61 +294,44 @@ class Joint3Driver(Node):
             msg.data = angle
             self.angle_pub.publish(msg)
             tgt_str = f"{self.current_target:.2f}" if self.current_target is not None else "None"
-            lim_status = "HIT" if GPIO.input(PIN_LIMIT) == 0 else "OK"
-            print(f"✅ J3 Active | Tgt: {tgt_str} | Cur: {angle:.2f} | Switch: {lim_status} ", end='\r')
+            
+            # เพิ่มสถานะ Limit ใน Print
+            lim_status = "🛑HIT" if GPIO.input(PIN_LIMIT) == 0 else "OK"
+            print(f"✅ Run | Tgt: {tgt_str} | Cur: {angle:.2f} | Lim: {lim_status}   ", end='\r')
+            
         elif not self.is_homed:
-            print(f"⚠️ J3 Wait Calib | Raw: {self.read_as5600():.2f} ", end='\r')
+            print(f"⚠️ Wait Calib | Raw: {self.read_as5600():.2f} ", end='\r')
 
     # ---------------------------------------------------------
-    # 🏠 HOMING (Calculates Offset with INVERT Logic)
+    # 🏠 HOMING & CLEANUP
     # ---------------------------------------------------------
     def perform_homing_sequence(self):
-        self.get_logger().info(f"🏠 Homing Started (Target: Limit={MIN_ANGLE_LIMIT}°)...")
+        self.get_logger().info("🏠 Homing Started...")
         HOMING_DELAY = 0.001 
         
         # 1. ถอยถ้าชน
         if GPIO.input(PIN_LIMIT) == 0:
             for _ in range(500): self.step_pulse_single(1, HOMING_DELAY)
             
-        # 2. วิ่งเข้าหา Limit (ทิศ -1)
+        # 2. วิ่งเข้าหา
         while GPIO.input(PIN_LIMIT) == 1: 
             self.step_pulse_single(-1, HOMING_DELAY)
             
-        # 3. ถอยออกนิดนึง (ทิศ +1)
+        # 3. ถอยออก
         for _ in range(500): self.step_pulse_single(1, HOMING_DELAY)
         time.sleep(0.5)
         
-        # 4. วิ่งเข้าหาช้าๆ (ทิศ -1)
+        # 4. วิ่งเข้าหาช้าๆ
         while GPIO.input(PIN_LIMIT) == 1: 
             self.step_pulse_single(-1, HOMING_DELAY * 2)
             
-        # 5. Set Offset
+        # 5. Set Zero
         val = self.read_as5600()
-        if val is not None: 
-            target_val = MIN_ANGLE_LIMIT # 8.0
-            
-            # 🔥 คำนวณ OFFSET ตามโหมด Invert 🔥
-            if INVERT_SENSOR_DIR:
-                # สูตรกลับทิศ: Target = Offset - Raw
-                # ดังนั้น: Offset = Target + Raw
-                self.zero_offset = self.normalize_angle(target_val + val)
-            else:
-                # สูตรปกติ: Target = Raw - Offset
-                # ดังนั้น: Offset = Raw - Target
-                self.zero_offset = self.normalize_angle(val - target_val)
-            
+        if val: 
+            self.zero_offset = val
             self.is_homed = True
-            
-            print(f"\n[DEBUG] Raw: {val:.2f} | Desired: {target_val} | Invert: {INVERT_SENSOR_DIR}")
-            print(f"[DEBUG] Calc Offset: {self.zero_offset:.2f}")
-            print(f"[DEBUG] Verify: {self.calculate_angle(val):.2f}\n")
-            
-            # ถอยออกมาที่ Safe Position
-            safe_target = MIN_ANGLE_LIMIT + 1.0 
-            self.current_target = safe_target
-            
-            self.get_logger().info(f"✅ Homing Done. Offset: {self.zero_offset:.2f}")
-            
+            self.current_target = 0.0 
+            self.get_logger().info(f"✅ Homing Done. New Offset: {self.zero_offset:.2f}")
         else:
             self.get_logger().error("❌ Homing Failed: Sensor Error")
 
@@ -358,8 +341,10 @@ class Joint3Driver(Node):
     def destroy_node(self):
         self.get_logger().info("🛑 Shutting down...")
         self.save_current_state()
+        
         self.running = False
-        if hasattr(self, 'worker_thread'): self.worker_thread.join()
+        if hasattr(self, 'worker_thread'):
+            self.worker_thread.join()
         self.enable_motor(False)
         GPIO.cleanup()
         super().destroy_node()
