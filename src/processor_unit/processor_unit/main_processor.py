@@ -6,23 +6,7 @@ from std_msgs.msg import Float32
 class Main_Processor(Node):
     def __init__(self):
         super().__init__('Main_processor_node')
-        #มุมที่เปลี่ยนแปลงจะถูกส่งไปที่ Driver ของ Joint 1
-
-        # Publisher: ส่งคำสั่งมุมไปที่ Driver
-        self.target_pub = self.create_publisher(Float32, 'joint1/set_target_angle', 10)
         
-        # Subscriber: ฟังค่ามุมปัจจุบัน (เพื่อ Monitor)
-        self.create_subscription(Float32, 'joint1/angle', self.angle_callback, 10)
-
-        self.get_logger().info("🧠 Processor Ready. Sending commands to Joint 1 Driver.")
-        
-        # ตัวอย่าง: Timer ส่งคำสั่งทดสอบ (Optional: ลบออกได้ถ้าจะสั่งมือ)
-        # self.create_timer(5.0, self.demo_sequence) 
-        self.step_state = 0
-
-    def angle_callback(self, msg):
-        # รับรู้มุมปัจจุบัน แต่ยังไม่ได้ทำอะไรพิเศษ
-        pass
 
     def send_angle(self, angle):
         msg = Float32()
@@ -30,16 +14,9 @@ class Main_Processor(Node):
         self.target_pub.publish(msg)
         self.get_logger().info(f"📤 Sent Command: Move to {angle:.2f} deg")
 
-    # (ฟังก์ชันเสริม) ทดสอบส่งค่าไปมา
-    def demo_sequence(self):
-        targets = [90.0, 60.0, 30.0] # มุมที่จะวิ่งไป
-        target = targets[self.step_state % len(targets)]
-        self.send_angle(target)
-        self.step_state += 1
-
 def main(args=None):
     rclpy.init(args=args)
-    node = Joint1Processor()
+    node = Main_Processor()
 
     try:
         rclpy.spin(node)
