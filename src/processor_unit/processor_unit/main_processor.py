@@ -6,7 +6,6 @@ from std_msgs.msg import Float32
 class Main_Processor(Node):
     def __init__(self):
         super().__init__('Main_processor_node')
-        
 
     def send_angle(self, angle):
         msg = Float32()
