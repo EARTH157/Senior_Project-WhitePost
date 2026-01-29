@@ -3,9 +3,9 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
 
-class Joint1Processor(Node):
+class Main_Processor(Node):
     def __init__(self):
-        super().__init__('joint1_processor_node')
+        super().__init__('Main_processor_node')
         #มุมที่เปลี่ยนแปลงจะถูกส่งไปที่ Driver ของ Joint 1
 
         # Publisher: ส่งคำสั่งมุมไปที่ Driver
@@ -40,11 +40,7 @@ class Joint1Processor(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = Joint1Processor()
-    
-    # ถ้าอยากให้มันรอรับคำสั่งผ่าน Terminal (manual control)
-    # สามารถใช้ ros2 topic pub หรือเขียน input() ตรงนี้ก็ได้
-    # แต่วิธีมาตรฐานคือใช้ rclpy.spin แล้วรับ msg จาก Topic อื่น
-    
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
