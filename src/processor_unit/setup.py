@@ -25,6 +25,8 @@ setup(
     entry_points={
         'console_scripts': [
             'main_processor = processor_unit.main_processor:main',
+            'test = processor_unit.test:main',
+            'test1 = processor_unit.test1:main',
         ],
     },
 )
