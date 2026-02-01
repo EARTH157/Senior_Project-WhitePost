@@ -112,14 +112,12 @@ class IKSolverNode(Node):
         # --- 6. Joint 4 (Wrist Pitch) ---
         # สมการ: theta2 + theta3 + theta4 = 0 (เพื่อให้ขนานพื้น)
         if -theta3_raw > theta2:
-            theta4_raw = -(theta2 + theta3_raw)
-            theta4_raw = (math.pi / 2) + theta4_raw
+            theta4_raw = -(theta2 + theta3_raw) + (math.pi / 2)
+        elif -theta3_raw == theta2:
+            theta4_raw = math.pi / 2
         else:
-            # มุม 2 มากกว่า มุม 3
             theta4_raw = (theta2 + theta3_raw)
-            delta = theta2 - theta3_raw
-            phi = (math.pi / 2) - delta
-            theta4_raw = (theta4_raw + phi) - delta
+            theta4_raw = (math.pi / 2) - theta4_raw
         # แปลงให้เป็นบวก (แก้ปัญหาค่าติดลบ -230 -> +130)
         theta4 = normalize_angle_positive(theta4_raw)
 
