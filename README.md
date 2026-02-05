@@ -20,7 +20,7 @@ kill -9
 
 ros2 run motor_control stepmotor1
 
-ros2 run motor_control servo_driver_i2c
+ros2 run motor_control servodrive
 
 ros2 run motor_control joint1_node
 
